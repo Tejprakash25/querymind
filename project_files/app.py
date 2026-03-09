@@ -1,6 +1,6 @@
 """
 app.py — QueryMind: Talk to Your Database in Plain English
-Run: streamlit run app.py
+Run: streamlit run app.py, i.e. `python -m streamlit run app.py`
 """
 
 import streamlit as st
