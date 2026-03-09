@@ -1,12 +1,20 @@
 """
 app.py — QueryMind: Talk to Your Database in Plain English
-Run: streamlit run app.py, i.e. `python -m streamlit run app.py`
+Run: streamlit run app.py
 """
 
+import os
 import streamlit as st
 import pandas as pd
-from db_engine import get_schema, get_schema_detailed, execute_query, db_exists, get_db_path
+from seed_db import seed as _seed, DB_PATH as _DB_PATH
+from db_engine import get_schema, get_schema_detailed, execute_query, db_exists
 from llm_engine import generate_sql, get_provider_info
+
+# ---------------------------------------------------------------------------
+# Auto-seed database if not found (handles Streamlit Cloud cold starts)
+# ---------------------------------------------------------------------------
+if not db_exists():
+    _seed(silent=True)
 
 # ---------------------------------------------------------------------------
 # Page config — must be first Streamlit call
@@ -23,14 +31,10 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 st.markdown("""
 <style>
-    /* Main background */
     .stApp { background-color: #0e1117; }
-
-    /* Hide default streamlit menu & footer */
     #MainMenu { visibility: hidden; }
     footer { visibility: hidden; }
 
-    /* Header */
     .qm-header {
         padding: 1.5rem 0 1rem 0;
         border-bottom: 1px solid #21262d;
@@ -47,8 +51,6 @@ st.markdown("""
         font-size: 0.95rem;
         margin-top: 0.25rem;
     }
-
-    /* Provider badge */
     .qm-badge {
         display: inline-block;
         background: #1a1d27;
@@ -59,8 +61,6 @@ st.markdown("""
         color: #8b8fa8;
         margin-top: 0.5rem;
     }
-
-    /* Example question buttons */
     .stButton > button {
         background-color: #1a1d27 !important;
         border: 1px solid #30363d !important;
@@ -76,8 +76,6 @@ st.markdown("""
         border-color: #00d4aa !important;
         color: #00d4aa !important;
     }
-
-    /* SQL code block label */
     .qm-label {
         font-size: 0.8rem;
         color: #8b8fa8;
@@ -86,15 +84,11 @@ st.markdown("""
         margin-bottom: 0.3rem;
         margin-top: 1rem;
     }
-
-    /* Result count */
     .qm-result-meta {
         font-size: 0.85rem;
         color: #8b8fa8;
         margin-bottom: 0.5rem;
     }
-
-    /* Error box */
     .qm-error {
         background: #2d1b1b;
         border: 1px solid #ef4444;
@@ -103,18 +97,6 @@ st.markdown("""
         color: #fca5a5;
         font-size: 0.9rem;
     }
-
-    /* Warning box */
-    .qm-warn {
-        background: #2d2500;
-        border: 1px solid #f59e0b;
-        border-radius: 8px;
-        padding: 1rem;
-        color: #fcd34d;
-        font-size: 0.9rem;
-    }
-
-    /* Input box */
     .stTextInput > div > div > input {
         background-color: #161b22 !important;
         border: 1px solid #30363d !important;
@@ -128,7 +110,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
@@ -141,26 +122,10 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-
-# ---------------------------------------------------------------------------
-# DB check
-# ---------------------------------------------------------------------------
-if not db_exists():
-    st.markdown("""
-    <div class="qm-warn">
-        ⚠️ <strong>Database not found.</strong><br>
-        Run this command first:<br>
-        <code>python seed_db.py</code>
-    </div>
-    """, unsafe_allow_html=True)
-    st.stop()
-
-
 # ---------------------------------------------------------------------------
 # Layout: two columns
 # ---------------------------------------------------------------------------
 col_left, col_right = st.columns([1, 2], gap="large")
-
 
 # ---------------------------------------------------------------------------
 # LEFT COLUMN — Schema viewer + examples
@@ -168,8 +133,7 @@ col_left, col_right = st.columns([1, 2], gap="large")
 with col_left:
     st.markdown("#### 📊 Database Schema")
     with st.expander("View Tables", expanded=True):
-        schema_display = get_schema_detailed()
-        st.code(schema_display, language="sql")
+        st.code(get_schema_detailed(), language="sql")
 
     st.markdown("#### 💡 Try These Questions")
     examples = [
@@ -183,7 +147,6 @@ with col_left:
         "Top 3 most expensive products",
     ]
 
-    # Initialize session state
     if "question_input" not in st.session_state:
         st.session_state["question_input"] = ""
 
@@ -191,7 +154,6 @@ with col_left:
         if st.button(ex, key=f"ex_{ex}"):
             st.session_state["question_input"] = ex
             st.rerun()
-
 
 # ---------------------------------------------------------------------------
 # RIGHT COLUMN — Query input + results
@@ -209,9 +171,6 @@ with col_right:
 
     run_btn = st.button("🔍 Generate & Run Query", type="primary", use_container_width=True)
 
-    # ---------------------------------------------------------------------------
-    # Query execution
-    # ---------------------------------------------------------------------------
     if run_btn and question.strip():
         schema = get_schema()
         sql = ""
@@ -219,34 +178,32 @@ with col_right:
         error_msg = ""
 
         with st.spinner("Generating SQL..."):
-            # Attempt 1
             try:
                 sql = generate_sql(schema, question)
             except RuntimeError as e:
-                st.markdown(f'<div class="qm-error">❌ LLM Error: {str(e)}</div>',
-                            unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="qm-error">❌ LLM Error: {str(e)}</div>',
+                    unsafe_allow_html=True
+                )
                 st.stop()
 
         if sql:
-            # Attempt to execute — with one retry on failure
             with st.spinner("Running query..."):
                 try:
                     df = execute_query(sql)
                 except ValueError as e:
                     error_msg = str(e)
-                    # Retry: send error back to LLM
+                    # Retry with error feedback
                     try:
                         sql = generate_sql(schema, question, error_feedback=error_msg)
                         df = execute_query(sql)
-                        error_msg = ""  # cleared — retry succeeded
+                        error_msg = ""
                     except (ValueError, RuntimeError) as e2:
                         error_msg = str(e2)
 
-            # --- Show SQL ---
             st.markdown('<p class="qm-label">Generated SQL</p>', unsafe_allow_html=True)
             st.code(sql, language="sql")
 
-            # --- Show results or error ---
             if df is not None and error_msg == "":
                 row_count = len(df)
                 st.markdown(
@@ -257,10 +214,9 @@ with col_right:
                     st.info("Query ran successfully but returned no rows.")
                 else:
                     st.dataframe(df, use_container_width=True, hide_index=True)
-                    csv = df.to_csv(index=False).encode("utf-8")
                     st.download_button(
                         label="⬇️ Download as CSV",
-                        data=csv,
+                        data=df.to_csv(index=False).encode("utf-8"),
                         file_name="querymind_results.csv",
                         mime="text/csv",
                     )
@@ -275,9 +231,6 @@ with col_right:
     elif run_btn and not question.strip():
         st.warning("Please enter a question before running.")
 
-    # ---------------------------------------------------------------------------
-    # Empty state hint
-    # ---------------------------------------------------------------------------
     if not run_btn:
         st.markdown("""
         <div style="margin-top:2rem; padding:1.5rem; background:#161b22;

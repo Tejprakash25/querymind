@@ -1,6 +1,7 @@
 """
-seed_db.py — Run this ONCE to create and populate querymind.db
+seed_db.py — Creates and populates querymind.db
 Usage: python seed_db.py
+Also called automatically by app.py on Streamlit Cloud if DB not found.
 """
 
 import sqlite3
@@ -8,18 +9,26 @@ import os
 import random
 from datetime import date, timedelta
 
-DB_PATH = "querymind.db"
+# Always resolve DB path relative to this file — works locally and on Streamlit Cloud
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "querymind.db")
 
 
-def seed():
+def seed(silent: bool = False):
+    """
+    Creates and seeds the database.
+    silent=True suppresses all print output (used when called from app.py).
+    """
+    def log(msg):
+        if not silent:
+            print(msg)
+
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
-        print(f"Removed existing {DB_PATH}")
+        log(f"Removed existing {DB_PATH}")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # --- Create Tables ---
     cursor.executescript("""
         CREATE TABLE customers (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,25 +57,23 @@ def seed():
         );
     """)
 
-    # --- Seed Customers ---
     customers = [
-        ("Aarav Shah",      "aarav@example.com",   "Mumbai"),
-        ("Priya Nair",      "priya@example.com",   "Pune"),
-        ("Rohan Mehta",     "rohan@example.com",   "Delhi"),
-        ("Sneha Patil",     "sneha@example.com",   "Bangalore"),
-        ("Vikram Singh",    "vikram@example.com",  "Chennai"),
-        ("Ananya Iyer",     "ananya@example.com",  "Hyderabad"),
-        ("Karan Gupta",     "karan@example.com",   "Kolkata"),
-        ("Meera Joshi",     "meera@example.com",   "Ahmedabad"),
-        ("Arjun Rao",       "arjun@example.com",   "Jaipur"),
-        ("Divya Sharma",    "divya@example.com",   "Lucknow"),
+        ("Aarav Shah",   "aarav@example.com",   "Mumbai"),
+        ("Priya Nair",   "priya@example.com",   "Pune"),
+        ("Rohan Mehta",  "rohan@example.com",   "Delhi"),
+        ("Sneha Patil",  "sneha@example.com",   "Bangalore"),
+        ("Vikram Singh", "vikram@example.com",  "Chennai"),
+        ("Ananya Iyer",  "ananya@example.com",  "Hyderabad"),
+        ("Karan Gupta",  "karan@example.com",   "Kolkata"),
+        ("Meera Joshi",  "meera@example.com",   "Ahmedabad"),
+        ("Arjun Rao",    "arjun@example.com",   "Jaipur"),
+        ("Divya Sharma", "divya@example.com",   "Lucknow"),
     ]
     cursor.executemany(
         "INSERT INTO customers (name, email, city) VALUES (?, ?, ?)",
         customers
     )
 
-    # --- Seed Products ---
     products = [
         ("Laptop Stand",        "Accessories",   799.0,  45),
         ("Mechanical Keyboard", "Accessories",  2499.0,  30),
@@ -77,26 +84,23 @@ def seed():
         ("Desk Lamp",           "Furniture",     399.0,  55),
         ("Notebook Set",        "Stationery",    149.0, 200),
         ("Headphones",          "Electronics",  1899.0,  35),
-        ("Phone Stand",         "Accessories",   299.0,   0),  # out of stock
+        ("Phone Stand",         "Accessories",   299.0,   0),
     ]
     cursor.executemany(
         "INSERT INTO products (name, category, price, stock) VALUES (?, ?, ?, ?)",
         products
     )
 
-    # --- Seed Orders ---
     statuses = ["completed", "completed", "completed", "pending", "cancelled"]
     base_date = date.today() - timedelta(days=90)
-
     orders = []
     random.seed(42)
     for i in range(50):
         customer_id = random.randint(1, 10)
         product_id  = random.randint(1, 10)
         quantity    = random.randint(1, 5)
-        # fetch price
         cursor.execute("SELECT price FROM products WHERE id = ?", (product_id,))
-        price = cursor.fetchone()[0]
+        price      = cursor.fetchone()[0]
         amount     = round(price * quantity, 2)
         order_date = (base_date + timedelta(days=random.randint(0, 89))).isoformat()
         status     = random.choice(statuses)
@@ -110,15 +114,17 @@ def seed():
     conn.commit()
     conn.close()
 
-    # Verify
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM customers"); print(f"Customers : {c.fetchone()[0]}")
-    c.execute("SELECT COUNT(*) FROM products");  print(f"Products  : {c.fetchone()[0]}")
-    c.execute("SELECT COUNT(*) FROM orders");    print(f"Orders    : {c.fetchone()[0]}")
+    c.execute("SELECT COUNT(*) FROM customers")
+    log(f"Customers : {c.fetchone()[0]}")
+    c.execute("SELECT COUNT(*) FROM products")
+    log(f"Products  : {c.fetchone()[0]}")
+    c.execute("SELECT COUNT(*) FROM orders")
+    log(f"Orders    : {c.fetchone()[0]}")
     conn.close()
-    print(f"\nDatabase ready: {DB_PATH}")
+    log(f"\nDatabase ready: {DB_PATH}")
 
 
 if __name__ == "__main__":
-    seed()
+    seed(silent=False)
